@@ -1,0 +1,313 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+  labels:
+    name: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}-bmc-secret
+  namespace: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+type: Opaque
+data:
+  password: {{ bmc_password_base64 }}
+  username: {{ bmc_username_base64 }}
+---
+apiVersion: agent-install.openshift.io/v1beta1
+kind: NMStateConfig
+metadata:
+  name: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+  namespace: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+  labels:
+    sno-cluster-{{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+spec:
+  config:
+    interfaces:
+    - name: ens3f0
+      type: ethernet
+      state: up
+      {{ "ipv6" if hostvars[ groups['hv'][0] ]['ip'] | ansible.utils.ipv6 else "ipv4" }}:
+        enabled: true
+        autoconf: false
+        dhcp: false
+        address:
+        - ip: {{ hostvars[ groups['hv'][0] ]['ip'] }}
+          prefix-length: {{ hostvars[ groups['hv'][0] ]['network_prefix'] }}
+        dhcp: false
+    dns-resolver:
+      config:
+        server:
+        - {{ hostvars[ groups['hv'][0] ]['ip'] }}
+    routes:
+      config:
+      - destination: {{ "::/0" if hostvars[ groups['hv'][0] ]['ip'] | ansible.utils.ipv6 else "0.0.0.0/0" }}
+        metric: 1
+        next-hop-address: {{ hostvars[ groups['hv'][0] ]['gateway'] }}
+        next-hop-interface: ens3f0
+        table-id: 254
+  interfaces:
+  - name: ens3f0
+    macAddress: {{ hostvars[ groups['hv'][0] ]['mac_address'] }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ai-pull-secret
+  namespace: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+type: kubernetes.io/dockerconfigjson
+data:
+  .dockerconfigjson: {{ pull_secret }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}-marketplace-namespace
+  namespace: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+data:
+  namespace.yml: |
+    # Taken from https://github.com/operator-framework/operator-marketplace/blob/53c124a3f0edfd151652e1f23c87dd39ed7646bb/manifests/01_namespace.yaml
+    # Update it as the source evolves.
+    apiVersion: v1
+    kind: Namespace
+    metadata:
+      annotations:
+        openshift.io/node-selector: ""
+        workload.openshift.io/allowed: "management"
+      labels:
+        openshift.io/cluster-monitoring: "true"
+        pod-security.kubernetes.io/enforce: baseline
+        pod-security.kubernetes.io/enforce-version: v1.25
+        pod-security.kubernetes.io/audit: baseline
+        pod-security.kubernetes.io/audit-version: v1.25
+        pod-security.kubernetes.io/warn: baseline
+        pod-security.kubernetes.io/warn-version: v1.25
+      name: "openshift-marketplace"
+---
+apiVersion: extensions.hive.openshift.io/v1beta1
+kind: AgentClusterInstall
+metadata:
+  annotations:
+{% if siteconfig_sno_du_profile == "4.15" %}
+    agent-install.openshift.io/install-config-overrides: '{"networking":{"networkType":"OVNKubernetes"},"capabilities":{"baselineCapabilitySet":"None","additionalEnabledCapabilities":["OperatorLifecycleManager","NodeTuning"]}}'
+{% elif siteconfig_sno_du_profile in ["4.16", "4.17"] %}
+    agent-install.openshift.io/install-config-overrides: '{"networking":{"networkType":"OVNKubernetes"},"capabilities":{"baselineCapabilitySet":"None","additionalEnabledCapabilities":["OperatorLifecycleManager","Ingress","NodeTuning"]}}'
+{% else %}
+    agent-install.openshift.io/install-config-overrides: '{"networking":{"networkType":"OVNKubernetes"}}'
+{% endif %}
+  name: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+  namespace: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+spec:
+  clusterDeploymentRef:
+    name: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+  imageSetRef:
+    name: {{ cluster_image_set }}
+  networking:
+    clusterNetwork:
+      - cidr: {{ "fd01::/48" if hostvars[ groups['hv'][0] ]['ip'] | ansible.utils.ipv6 else "10.128.0.0/14" }}
+        hostPrefix: {{ hostvars[ groups['hv'][0] ]['network_prefix'] }}
+    machineNetwork:
+      - cidr: {{ hostvars[ groups['hv'][0] ]['machine_network'] }}
+    serviceNetwork:
+      - {{ "fd02::/112" if hostvars[ groups['hv'][0] ]['ip'] | ansible.utils.ipv6 else "172.30.0.0/16" }}
+  provisionRequirements:
+    controlPlaneAgents: 1
+    workerAgents: 0
+  sshPublicKey: {{ lookup('file', ssh_public_key_file) }}
+{% if siteconfig_sno_du_profile in ["4.15", "4.16", "4.17"] %}
+  manifestsConfigMapRefs:
+  - name: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}-marketplace-namespace
+{% if siteconfig_enable_cpuset %}
+  - name: sno-workload-partitioning-configmap
+{% else %}
+  # - name: sno-workload-partitioning-configmap
+{% endif %}
+{% else %}
+{% if siteconfig_enable_cpuset %}
+  manifestsConfigMapRefs:
+  - name: sno-workload-partitioning-configmap
+{% else %}
+  # manifestsConfigMapRefs:
+  # - name: sno-workload-partitioning-configmap
+{% endif %}
+{% endif %}
+---
+apiVersion: hive.openshift.io/v1
+kind: ClusterDeployment
+metadata:
+  name: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+  namespace: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+spec:
+  baseDomain: {{ hostvars[ groups['hv'][0] ]['base_domain'] }}
+  clusterInstallRef:
+    group: extensions.hive.openshift.io
+    kind: AgentClusterInstall
+    name: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+    version: v1beta1
+  clusterName: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+  platform:
+    agentBareMetal:
+      agentSelector:
+        matchLabels:
+          cluster-name: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+  pullSecretRef:
+    name: ai-pull-secret
+{% if hv_vm_manifest_acm_cr %}
+---
+apiVersion: agent.open-cluster-management.io/v1
+kind: KlusterletAddonConfig
+metadata:
+  name: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+  namespace: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+spec:
+  clusterName: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+  clusterNamespace: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+  clusterLabels:
+    cloud: auto-detect
+    vendor: auto-detect
+  applicationManager:
+    enabled: false
+  certPolicyController:
+    enabled: false
+  iamPolicyController:
+    enabled: false
+  policyController:
+    enabled: true
+  searchCollector:
+    enabled: false
+---
+apiVersion: cluster.open-cluster-management.io/v1
+kind: ManagedCluster
+metadata:
+  name: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+  labels:
+    common: 'true'
+{% if siteconfig_sno_du_profile in ["4.12", "4.13", "4.14", "4.15", "4.16", "4.17"] %}
+    du-profile: "{{ siteconfig_sno_du_profile }}"
+{% endif %}
+    group-du-sno: ''
+    name: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+    observability: disabled
+    sites: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+    vendor: OpenShift
+spec:
+  hubAcceptsClient: true
+{% endif %}
+---
+apiVersion: agent-install.openshift.io/v1beta1
+kind: InfraEnv
+metadata:
+  name: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+  namespace: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+spec:
+  additionalNTPSources:
+  - {{ hostvars[ groups['hv'][0] ]['ip'] }}
+  clusterRef:
+    name: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+    namespace: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+  sshAuthorizedKey: {{ lookup('file', ssh_public_key_file) }}
+  agentLabelSelector:
+    matchLabels:
+      cluster-name: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+  pullSecretRef:
+    name: ai-pull-secret
+  nmStateConfigLabelSelector:
+    matchLabels:
+      sno-cluster-{{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+---
+apiVersion: metal3.io/v1alpha1
+kind: BareMetalHost
+metadata:
+  name: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+  namespace: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+  annotations:
+    inspect.metal3.io: disabled
+    bmac.agent-install.openshift.io/hostname: "{{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}"
+  labels:
+    infraenvs.agent-install.openshift.io: "{{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}"
+spec:
+  bootMode: "UEFI"
+  bmc:
+{% if hostvars[ groups['hv'][0] ]['bmc_address'] | ansible.utils.ipv6 %}
+    address: redfish-virtualmedia+https://[{{ hostvars[groups['hv'][0]]['bmc_address'] }}]/redfish/v1/Systems/System.Embedded.1
+{% else %}
+    address: redfish-virtualmedia+https://[{{ hostvars[groups['hv'][0]]['bmc_address'] }}]/redfish/v1/Systems/System.Embedded.1
+{% endif %}
+    disableCertificateVerification: true
+    credentialsName: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}-bmc-secret
+  bootMACAddress: {{ hostvars[groups['hv'][0]]['mac_address'] }}
+  automatedCleaningMode: disabled
+  online: true
+{% if siteconfig_enable_cpuset %}
+---
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: sno-workload-partitioning-configmap
+  namespace: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+data:
+  workload-partitioning-mc.yaml: |
+    apiVersion: machineconfiguration.openshift.io/v1
+    kind: MachineConfig
+    metadata:
+      labels:
+        machineconfiguration.openshift.io/role: master
+      name: 02-master-workload-partitioning
+    spec:
+      config:
+        ignition:
+          version: 3.2.0
+        storage:
+          files:
+          - contents:
+              source: data:text/plain;charset=utf-8;base64,{{ lookup('template', './01-workload-partitioning.j2') | b64encode }}
+            mode: 420
+            overwrite: true
+            path: /etc/crio/crio.conf.d/01-workload-partitioning
+            user:
+              name: root
+          - contents:
+              source: data:text/plain;charset=utf-8;base64,{{ lookup('template', './openshift-workload-pinning.json.j2') | b64encode }}
+            mode: 420
+            overwrite: true
+            path: /etc/kubernetes/openshift-workload-pinning
+            user:
+              name: root
+{% else %}
+# ---
+# kind: ConfigMap
+# apiVersion: v1
+# metadata:
+#   name: sno-workload-partitioning-configmap
+#   namespace: {{ hostvars[groups['hv'][0]]['inventory_hostname_short'] }}
+# data:
+#   workload-partitioning-mc.yaml: |
+#     apiVersion: machineconfiguration.openshift.io/v1
+#     kind: MachineConfig
+#     metadata:
+#       labels:
+#         machineconfiguration.openshift.io/role: master
+#       name: 02-master-workload-partitioning
+#     spec:
+#       config:
+#         ignition:
+#           version: 3.2.0
+#         storage:
+#           files:
+#           - contents:
+#               source: data:text/plain;charset=utf-8;base64,{{ lookup('template', './01-workload-partitioning.j2') | b64encode }}
+#             mode: 420
+#             overwrite: true
+#             path: /etc/crio/crio.conf.d/01-workload-partitioning
+#             user:
+#               name: root
+#           - contents:
+#               source: data:text/plain;charset=utf-8;base64,{{ lookup('template', './openshift-workload-pinning.json.j2') | b64encode }}
+#             mode: 420
+#             overwrite: true
+#             path: /etc/kubernetes/openshift-workload-pinning
+#             user:
+#               name: root
+{% endif %}

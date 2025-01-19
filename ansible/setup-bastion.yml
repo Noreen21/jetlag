@@ -12,23 +12,23 @@
   - vars/lab.yml
   - vars/all.yml
   roles:
-  - validate-vars
-  - ocp-release
-  - bastion-install
-  - bastion-network
-  - role: bastion-dnsmasq
-    when: not setup_coredns
-  - role: bastion-coredns
-    when: setup_coredns
-  - bastion-http
-  - bastion-ocp-version
-  - role: bastion-registry
-    when: setup_bastion_registry
-  - role: sync-operator-index
-    when: setup_bastion_registry
-  - role: sync-ocp-release
-    when: setup_bastion_registry
-  - bastion-assisted-installer
+          #  - validate-vars
+          #  - ocp-release
+          #  - bastion-install
+          #  - bastion-network
+          #  - role: bastion-dnsmasq
+          #    when: not setup_coredns
+          #  - role: bastion-coredns
+          #    when: setup_coredns
+          #  - bastion-http
+          #  - bastion-ocp-version
+          #  - role: bastion-registry
+          #    when: setup_bastion_registry
+          #  - role: sync-operator-index
+          #    when: setup_bastion_registry
+          #  - role: sync-ocp-release
+          #    when: setup_bastion_registry
+          #  - bastion-assisted-installer
   - role: bastion-gogs
     when: setup_bastion_gogs
   - role: bastion-disconnected-haproxy

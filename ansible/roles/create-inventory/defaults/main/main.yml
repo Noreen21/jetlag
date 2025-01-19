@@ -5,7 +5,7 @@ ocp_inventory_override: ''
 
 # Master nodes "consume" the first 7 address out of the controlplane_network, workers start after this offset
 bm_worker_node_offset: 7
-
+bm_sno_node_offset: 0
 ################################################################################
 # Var(s) for hypervisors and hypervisor hosted VMs
 ################################################################################
